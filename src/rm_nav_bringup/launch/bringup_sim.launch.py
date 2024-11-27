@@ -245,13 +245,14 @@ def generate_launch_description():
                 actions=[
                     Node(
                         condition=LaunchConfigurationEquals('localization', 'icp'),
-                        package='icp_registration',
-                        executable='icp_registration_node',
+                        package='small_gicp_relocalization', #'icp_registration',
+                        executable="small_gicp_relocalization_node",#'icp_registration_node',
+                        name="small_gicp_relocalization",
+                        # parameters=[configured_params, {"prior_pcd_file": prior_pcd_file}],
                         output='screen',
                         parameters=[
                             icp_registration_params_dir,
-                            {'use_sim_time': use_sim_time,
-                                'pcd_path': icp_pcd_dir}
+                            {'prior_pcd_file': icp_pcd_dir}
                         ],
                         # arguments=['--ros-args', '--log-level', ['icp_registration:=', 'DEBUG']]
                     )

@@ -17,7 +17,7 @@ bool use_imu_as_input = false, space_down_sample = true, publish_odometry_withou
 int  init_map_size = 10, con_frame_num = 1;
 double match_s = 81, satu_acc, satu_gyro, cut_frame_time_interval = 0.1;
 float  plane_thr = 0.1f;
-double filter_size_surf_min = 0.5, filter_size_map_min = 0.5, fov_deg = 180;
+double filter_size_surf_min = 0.5, filter_size_map_min = 0.5, fov_deg = 180; //0.5;0.5
 // double cube_len = 2000; 
 float  DET_RANGE = 450;
 bool   imu_en = true;

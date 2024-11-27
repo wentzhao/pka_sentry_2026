@@ -40,7 +40,7 @@ def get_world_config(world_type):
             'x': '6.8',
             'y': '2.2',
             'z': '0.02',
-            'yaw': '0.0',
+            'yaw': '0.00',
             'world_path': 'SHENGSAI2025_world/SHENGSAI2025_world.world'
             # 'world_path': 'RMUL2024_world/RMUL2024_world_dynamic_obstacles.world'
         }

@@ -1,7 +1,7 @@
 colcon build
 source install/setup.sh
 ros2 launch rm_nav_bringup bringup_sim.launch.py \
-world:=SHENGSAI2025 \
+world:=RMUL \
 mode:=nav \
 lio:=pointlio \
 localization:=slam_toolbox \
