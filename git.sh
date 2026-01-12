@@ -48,3 +48,5 @@ fi
 echo "✅ 成功将代码推送到GitHub！分支：$current_branch"
 
 # git branch -m main
+
+# git pull
