@@ -336,6 +336,7 @@ static void loadPosesHelper(const std::string& file_path, Eigen::MatrixXd& poses
     }
 }
 
+
 SmallGicpRelocalizationNode::SmallGicpRelocalizationNode(const rclcpp::NodeOptions & options)
 : Node("small_gicp_relocalization", options),
   result_t_(Eigen::Isometry3d::Identity()),
