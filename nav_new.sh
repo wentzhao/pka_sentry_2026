@@ -52,3 +52,4 @@ do
 	gnome-terminal -- bash -c "cd $(pwd);source install/setup.bash;$cmd;exec bash;"
 	sleep 0.2
 done
+
