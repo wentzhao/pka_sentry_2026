@@ -41,6 +41,8 @@ def generate_launch_description():
     mapping = LaunchConfiguration("mapping")
     map_yaml_file = LaunchConfiguration("map")
     prior_pcd_file = LaunchConfiguration("prior_pcd_file")
+    scd_directory = LaunchConfiguration("scd_directory")
+    pose_file = LaunchConfiguration("pose_file")
     use_sim_time = LaunchConfiguration("use_sim_time")
     params_file = LaunchConfiguration("params_file")
     autostart = LaunchConfiguration("autostart")
@@ -95,6 +97,14 @@ def generate_launch_description():
 
     declare_prior_pcd_file_cmd = DeclareLaunchArgument(
         "prior_pcd_file", description="Full path to prior PCD file to load"
+    )
+
+    declare_scd_directory_cmd = DeclareLaunchArgument(
+        "scd_directory", description="Full path to prior PCD file to load"
+    )
+
+    declare_pose_file_cmd = DeclareLaunchArgument(
+        "pose_file", description="Full path to prior PCD file to load"
     )
 
     declare_use_sim_time_cmd = DeclareLaunchArgument(
@@ -157,6 +167,7 @@ def generate_launch_description():
                     "autostart": autostart,
                     "use_respawn": use_respawn,
                     "params_file": params_file,
+                    "slam":slam,
                 }.items(),
             ),
             IncludeLaunchDescription(
@@ -174,6 +185,9 @@ def generate_launch_description():
                     "use_composition": use_composition,
                     "use_respawn": use_respawn,
                     "container_name": "nav2_container",
+                    "slam":slam,
+                    "pose_file":pose_file,
+                    "scd_directory":scd_directory,
                 }.items(),
             ),
             IncludeLaunchDescription(
@@ -206,6 +220,8 @@ def generate_launch_description():
     ld.add_action(declare_mapping_cmd)
     ld.add_action(declare_map_yaml_cmd)
     ld.add_action(declare_prior_pcd_file_cmd)
+    ld.add_action(declare_scd_directory_cmd)
+    ld.add_action(declare_pose_file_cmd)
     ld.add_action(declare_use_sim_time_cmd)
     ld.add_action(declare_params_file_cmd)
     ld.add_action(declare_autostart_cmd)

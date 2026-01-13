@@ -41,6 +41,8 @@ def generate_launch_description():
     container_name_full = (namespace, "/", container_name)
     use_respawn = LaunchConfiguration("use_respawn")
     log_level = LaunchConfiguration("log_level")
+    scd_directory = LaunchConfiguration("scd_directory")
+    pose_file = LaunchConfiguration("pose_file")
 
     lifecycle_nodes = ["map_server"]
 
@@ -72,6 +74,13 @@ def generate_launch_description():
     )
     declare_slam_cmd = DeclareLaunchArgument(
         "slam", default_value="False", description="Whether run a SLAM"
+    )
+    declare_scd_directory_cmd = DeclareLaunchArgument(
+        "scd_directory", description="Full path to prior PCD file to load"
+    )
+
+    declare_pose_file_cmd = DeclareLaunchArgument(
+        "pose_file", description="Full path to prior PCD file to load"
     )
     declare_use_sim_time_cmd = DeclareLaunchArgument(
         "use_sim_time",
@@ -131,6 +140,7 @@ def generate_launch_description():
             {"prior_pcd.prior_pcd_map_path": prior_pcd_file},
         ],
         arguments=["--ros-args", "--log-level", log_level],
+        sigterm_timeout='60',
     )
 
     load_nodes = GroupAction(
@@ -154,7 +164,7 @@ def generate_launch_description():
                 output="screen",
                 respawn=use_respawn,
                 respawn_delay=2.0,
-                parameters=[configured_params, {"prior_pcd_file": prior_pcd_file}],
+                parameters=[configured_params, {"prior_pcd_file": prior_pcd_file},{"scd_directory":scd_directory},{"pose_file":pose_file}],
                 arguments=["--ros-args", "--log-level", log_level],
             ),
             Node(
@@ -238,6 +248,8 @@ def generate_launch_description():
     # Declare the launch options
     ld.add_action(declare_namespace_cmd)
     ld.add_action(declare_slam_cmd)
+    ld.add_action(declare_scd_directory_cmd)
+    ld.add_action(declare_pose_file_cmd)
     ld.add_action(declare_map_yaml_cmd)
     ld.add_action(declare_use_sim_time_cmd)
     ld.add_action(declare_prior_pcd_file_cmd)

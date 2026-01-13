@@ -184,7 +184,7 @@ small_gicp_relocalization:
     # ==============================
     # ScanContext 全局重定位 (Coarse Init)
     # ==============================
-    enable_sc_relocalization: false # 默认关闭 (false=从原点启动; true=使用SC重定位)
+    enable_sc_relocalization: true # 默认关闭 (false=从原点启动; true=使用SC重定位)
     sc_dist_thresh: 0.5             # 描述子匹配阈值 (越小越严格，范围 0.1-0.8)
 
     # ==============================

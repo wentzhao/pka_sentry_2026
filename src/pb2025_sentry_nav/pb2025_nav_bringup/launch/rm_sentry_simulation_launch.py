@@ -44,6 +44,8 @@ def generate_launch_description():
     use_respawn = LaunchConfiguration("use_respawn")
     rviz_config_file = LaunchConfiguration("rviz_config_file")
     use_rviz = LaunchConfiguration("use_rviz")
+    scd_directory = LaunchConfiguration("scd_directory")
+    pose_file = LaunchConfiguration("pose_file")
 
     configured_params = ParameterFile(
         RewrittenYaml(
@@ -97,6 +99,25 @@ def generate_launch_description():
             TextSubstitution(text=os.path.join(bringup_dir, "pcd", "simulation", "")),
             world,
             TextSubstitution(text=".pcd"),
+        ],
+        description="Full path to prior pcd file to load",
+    )
+
+    declare_scd_directory_cmd = DeclareLaunchArgument(
+        "scd_directory",
+        default_value=[
+            TextSubstitution(text=os.path.join(bringup_dir, "SCD", "simulation", "")),
+            world,
+        ],
+        description="Full path to map file to load",
+    )
+
+    declare_pose_file_cmd = DeclareLaunchArgument(
+        "pose_file",
+        default_value=[
+            TextSubstitution(text=os.path.join(bringup_dir, "pose", "simulation", "")),
+            world,
+            TextSubstitution(text=".txt"),
         ],
         description="Full path to prior pcd file to load",
     )
@@ -174,6 +195,9 @@ def generate_launch_description():
             "autostart": autostart,
             "use_composition": use_composition,
             "use_respawn": use_respawn,
+            "scd_directory":scd_directory,
+            "pose_file":pose_file,
+
         }.items(),
     )
 
@@ -205,6 +229,8 @@ def generate_launch_description():
     ld.add_action(declare_world_cmd)
     ld.add_action(declare_map_yaml_cmd)
     ld.add_action(declare_prior_pcd_file_cmd)
+    ld.add_action(declare_scd_directory_cmd)
+    ld.add_action(declare_pose_file_cmd)
     ld.add_action(declare_use_sim_time_cmd)
     ld.add_action(declare_params_file_cmd)
     ld.add_action(declare_autostart_cmd)
