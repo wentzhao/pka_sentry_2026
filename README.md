@@ -24,6 +24,22 @@
   sudo make install
   ```
 
+- Install [ndt_omp](https://github.com/koide3/ndt_omp.git):
+
+  ```bash
+  sudo apt install -y libeigen3-dev libomp-dev
+  
+  git clone https://github.com/koide3/ndt_omp.git
+  cd small_gicp
+  mkdir build && cd build
+  cmake .. -DCMAKE_BUILD_TYPE=Release && make -j
+  sudo make install
+  ```
+
+  
+
+
+
 ### 第三方依赖库
 
 livox-SDK2:https://github.com/Livox-SDK/Livox-SDK2.git
@@ -156,6 +172,8 @@ use_robot_state_pub:=True
 20251228：修改了cmakelist.txt
 
 20260112：编译时必须加release，不然无法发挥全部性能；修改重定位函数，新增任意点启动功能，但相关文件生成部分还没写出来，故设置一个开关用来开关任意点启动！
+
+20260113: 重定位算法大概完成，使用ndt+gicp，实测在rmul25仿真环境下，xy3m，yaw30度能稳定定位
 
 
 
