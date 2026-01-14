@@ -90,7 +90,7 @@ find_package(small_gicp REQUIRED)
 # 3. 查找本地安装的 ndt_omp
 # 注意：koide3/ndt_omp 安装后的 CMake 包名通常是 ndt_omp
 find_package(ndt_omp REQUIRED)
-find_package(nav2_msgs REQUIRED)
+
 ament_auto_find_build_dependencies()
 
 ###########
