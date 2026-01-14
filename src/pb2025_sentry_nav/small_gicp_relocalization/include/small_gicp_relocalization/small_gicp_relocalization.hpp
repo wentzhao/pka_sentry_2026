@@ -36,6 +36,8 @@
 #include "tf2_ros/transform_broadcaster.h"
 #include "tf2_ros/transform_listener.h"
 
+#include "nav2_msgs/srv/clear_entire_costmap.hpp"
+
 namespace small_gicp_relocalization
 {
 
@@ -50,9 +52,15 @@ private:
   void performRegistration();
   void publishTransform();
   void initialPoseCallback(const geometry_msgs::msg::PoseWithCovarianceStamped::SharedPtr msg);
+  void clearGlobalCostmap(bool force = false);
 
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr pcd_sub_;
   rclcpp::Subscription<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr initial_pose_sub_;
+  // [新增] Nav2 服务客户端
+  rclcpp::Client<nav2_msgs::srv::ClearEntireCostmap>::SharedPtr clear_costmap_client_;
+  rclcpp::Time last_clear_time_;
+  // [新增] 用于存储服务名称的变量 (可选，支持带命名空间的机器人)
+  std::string costmap_clear_service_name_;
 
   // --- Parameters ---
   int num_threads_;
@@ -67,6 +75,9 @@ private:
   double ndt_resolution_;
   double ndt_step_size_;
   double ndt_epsilon_;
+
+  double force_clear_costmap_threshold_;
+  double costmap_clear_cooldown_;
 
   std::vector<double> init_pose_;
   
