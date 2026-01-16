@@ -46,6 +46,7 @@ def generate_launch_description():
     use_rviz = LaunchConfiguration("use_rviz")
     scd_directory = LaunchConfiguration("scd_directory")
     pose_file = LaunchConfiguration("pose_file")
+    pgm_map_file = LaunchConfiguration("pgm_map_file")
 
     configured_params = ParameterFile(
         RewrittenYaml(
@@ -89,6 +90,16 @@ def generate_launch_description():
             TextSubstitution(text=os.path.join(bringup_dir, "map", "simulation", "")),
             world,
             TextSubstitution(text=".yaml"),
+        ],
+        description="Full path to map file to load",
+    )
+
+    declare_pgm_map_file_cmd = DeclareLaunchArgument(
+        "pgm_map_file",
+        default_value=[
+            TextSubstitution(text=os.path.join(bringup_dir, "map", "simulation", "")),
+            world,
+            TextSubstitution(text=".pgm"),
         ],
         description="Full path to map file to load",
     )
@@ -156,7 +167,7 @@ def generate_launch_description():
 
     declare_rviz_config_file_cmd = DeclareLaunchArgument(
         "rviz_config_file",
-        default_value=os.path.join(bringup_dir, "rviz", "nav2_default_view.rviz"),
+        default_value=os.path.join(bringup_dir, "rviz", "5.rviz"),
         description="Full path to the RVIZ config file to use",
     )
 
@@ -197,6 +208,7 @@ def generate_launch_description():
             "use_respawn": use_respawn,
             "scd_directory":scd_directory,
             "pose_file":pose_file,
+            "pgm_map_file":pgm_map_file,
 
         }.items(),
     )
@@ -239,6 +251,7 @@ def generate_launch_description():
     ld.add_action(declare_use_rviz_cmd)
     ld.add_action(declare_mapping_cmd)
     ld.add_action(declare_use_respawn_cmd)
+    ld.add_action(declare_pgm_map_file_cmd)
 
     # Add the actions to launch all of the navigation nodes
     ld.add_action(start_velodyne_convert_tool)

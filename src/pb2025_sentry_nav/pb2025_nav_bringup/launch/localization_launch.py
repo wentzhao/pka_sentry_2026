@@ -43,6 +43,7 @@ def generate_launch_description():
     log_level = LaunchConfiguration("log_level")
     scd_directory = LaunchConfiguration("scd_directory")
     pose_file = LaunchConfiguration("pose_file")
+    pgm_map_file = LaunchConfiguration("pgm_map_file")
 
     lifecycle_nodes = ["map_server"]
 
@@ -72,6 +73,11 @@ def generate_launch_description():
     declare_map_yaml_cmd = DeclareLaunchArgument(
         "map", description="Full path to map yaml file to load"
     )
+
+    declare_pgm_map_file_cmd = DeclareLaunchArgument(
+        "pgm_map_file", description="Full path to map yaml file to load"
+    )
+
     declare_slam_cmd = DeclareLaunchArgument(
         "slam", default_value="False", description="Whether run a SLAM"
     )
@@ -221,7 +227,7 @@ def generate_launch_description():
                 package="small_gicp_relocalization",
                 plugin="small_gicp_relocalization::SmallGicpRelocalizationNode",
                 name="small_gicp_relocalization",
-                parameters=[configured_params, {"prior_pcd_file": prior_pcd_file}],
+                parameters=[configured_params, {"prior_pcd_file": prior_pcd_file},{"pgm_map_file":pgm_map_file}],
             ),
             ComposableNode(
                 package="nav2_lifecycle_manager",
@@ -259,6 +265,7 @@ def generate_launch_description():
     ld.add_action(declare_container_name_cmd)
     ld.add_action(declare_use_respawn_cmd)
     ld.add_action(declare_log_level_cmd)
+    ld.add_action(declare_pgm_map_file_cmd)
 
     # Add the actions to launch all of the localiztion nodes
     ld.add_action(start_point_lio_node)

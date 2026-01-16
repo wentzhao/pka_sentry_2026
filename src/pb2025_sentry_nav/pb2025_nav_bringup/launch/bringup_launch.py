@@ -49,6 +49,7 @@ def generate_launch_description():
     use_composition = LaunchConfiguration("use_composition")
     use_respawn = LaunchConfiguration("use_respawn")
     log_level = LaunchConfiguration("log_level")
+    pgm_map_file = LaunchConfiguration("pgm_map_file")
 
     # Create our own temporary YAML files that include substitutions
     param_substitutions = {"use_sim_time": use_sim_time, "yaml_filename": map_yaml_file}
@@ -93,6 +94,10 @@ def generate_launch_description():
 
     declare_map_yaml_cmd = DeclareLaunchArgument(
         "map", description="Full path to map yaml file to load"
+    )
+
+    declare_pgm_map_file_cmd = DeclareLaunchArgument(
+        "pgm_map_file", description="Full path to map yaml file to load"
     )
 
     declare_prior_pcd_file_cmd = DeclareLaunchArgument(
@@ -188,6 +193,7 @@ def generate_launch_description():
                     "slam":slam,
                     "pose_file":pose_file,
                     "scd_directory":scd_directory,
+                    "pgm_map_file":pgm_map_file,
                 }.items(),
             ),
             IncludeLaunchDescription(
@@ -228,6 +234,7 @@ def generate_launch_description():
     ld.add_action(declare_use_composition_cmd)
     ld.add_action(declare_use_respawn_cmd)
     ld.add_action(declare_log_level_cmd)
+    ld.add_action(declare_pgm_map_file_cmd)
 
     # Add the actions to launch all of the navigation nodes
     ld.add_action(bringup_cmd_group)
