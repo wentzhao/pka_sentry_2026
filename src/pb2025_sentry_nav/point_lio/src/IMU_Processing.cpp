@@ -96,12 +96,44 @@ void ImuProcess::Process(const MeasureGroup & meas, PointCloudXYZI::Ptr cur_pcl_
 
         imu_need_init_ = true;
 
+      //   if (init_iter_num > MAX_INI_COUNT) {
+      //     RCLCPP_INFO(logger, "IMU Initializing: %.1f %%", 100.0);
+      //     imu_need_init_ = false;
+      //     *cur_pcl_un_ = *(meas.lidar);
+      //   }
+      //   // *cur_pcl_un_ = *(meas.lidar);
+      // }
+      // return;
+        // 当收集满数据（例如100帧）后
         if (init_iter_num > MAX_INI_COUNT) {
-          RCLCPP_INFO(logger, "IMU Initializing: %.1f %%", 100.0);
+            
+          // ================= [新增] 重力对齐核心代码 =================
+          // 1. 计算平均加速度
+          V3D avg_acc = mean_acc / double(init_iter_num);
+
+          // 2. 计算方向向量
+          // 加速度计测量的是支撑力，静止时指向"上" (Z轴)
+          V3D acc_unit = avg_acc.normalized(); 
+          V3D z_axis_world(0.0, 0.0, 1.0); // 世界坐标系的 Z 轴
+
+          // 3. 计算旋转矩阵 R_wb (从 Body 到 World)
+          // 我们需要一个旋转 R，使得 R * acc_unit = z_axis_world
+          Eigen::Quaterniond q_init;
+          q_init.setFromTwoVectors(acc_unit, z_axis_world);
+          init_rot_ = q_init.toRotationMatrix();
+
+          // 打印日志，确认计算结果
+          RCLCPP_INFO(logger, "IMU Initializing Done!");
+          RCLCPP_INFO(logger, "Avg Acc: %.3f, %.3f, %.3f", avg_acc.x(), avg_acc.y(), avg_acc.z());
+          
+          // 计算对应的欧拉角方便人眼检查 (Roll, Pitch, Yaw)
+          V3D euler = init_rot_.eulerAngles(0, 1, 2) * 180 / M_PI;
+          RCLCPP_INFO(logger, "Calculated Init RPY: %.2f, %.2f, %.2f", euler.x(), euler.y(), euler.z());
+          // =========================================================
+
           imu_need_init_ = false;
           *cur_pcl_un_ = *(meas.lidar);
         }
-        // *cur_pcl_un_ = *(meas.lidar);
       }
       return;
     }

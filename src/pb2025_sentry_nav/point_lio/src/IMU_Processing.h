@@ -52,6 +52,7 @@ public:
   double time_last_scan = 0.0;
   V3D cov_gyr_scale = V3D(0.0001, 0.0001, 0.0001);
   V3D cov_vel_scale = V3D(0.0001, 0.0001, 0.0001);
+  Eigen::Matrix3d init_rot_ = Eigen::Matrix3d::Identity();
 
 private:
   void IMU_init(const MeasureGroup & meas, int & N);
