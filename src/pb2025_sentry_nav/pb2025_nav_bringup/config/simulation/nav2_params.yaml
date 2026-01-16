@@ -143,8 +143,10 @@ fake_vel_transform:
 small_gicp_relocalization:
   ros__parameters:
     use_sim_time: True
-    debug: true
+    debug: false
     use_ndt: true
+    error_threshold: 0.5
+    skip_step: 2
     num_threads: 4
     num_neighbors: 20
     global_leaf_size: 0.1

@@ -60,8 +60,11 @@ private:
   // 【新增】NDT 参数
   bool use_ndt_;
   double ndt_resolution_;
+  double error_threshold_;
   int ndt_num_threads_;
   bool debug_;
+  bool is_lost_;
+  int skip_step_;
   std::vector<double> init_pose_;
 
   std::string map_frame_;

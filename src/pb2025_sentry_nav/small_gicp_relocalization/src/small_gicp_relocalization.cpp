@@ -46,6 +46,8 @@ SmallGicpRelocalizationNode::SmallGicpRelocalizationNode(const rclcpp::NodeOptio
   this->declare_parameter("ndt_resolution", 1.0);    // 飞虎推荐 1.0m (粗配准网格大一点)
   this->declare_parameter("ndt_num_threads", 4);     // 并行线程数
   this->declare_parameter("debug", false);
+  this->declare_parameter("error_threshold", 1.0); // 经验值，超过1.0m误差认为丢了
+  this->declare_parameter("skip_step",4);
 
   this->get_parameter("num_threads", num_threads_);
   this->get_parameter("num_neighbors", num_neighbors_);
@@ -65,7 +67,10 @@ SmallGicpRelocalizationNode::SmallGicpRelocalizationNode(const rclcpp::NodeOptio
   this->get_parameter("ndt_resolution", ndt_resolution_);
   this->get_parameter("ndt_num_threads", ndt_num_threads_);
   this->get_parameter("debug", debug_);
+  this->get_parameter("error_threshold", error_threshold_);
+  this->get_parameter("skip_step",skip_step_);
 
+  is_lost_ = true; 
   // [x, y, z, roll, pitch, yaw] - init_pose parameters
   if (!init_pose_.empty() && init_pose_.size() >= 6) {
     result_t_.translation() << init_pose_[0], init_pose_[1], init_pose_[2];
@@ -204,59 +209,47 @@ void SmallGicpRelocalizationNode::registeredPcdCallback(
 
 void SmallGicpRelocalizationNode::performRegistration()
 {
-  if (accumulated_cloud_->empty()) {
-    // RCLCPP_WARN(this->get_logger(), "No accumulated points to process.");
-    return;
-  }
-  auto t_start_total = std::chrono::high_resolution_clock::now();
-  // 1. 预处理当前帧 (Source) - 下采样和协方差估计
+  if (accumulated_cloud_->empty()) return;
+
+  // --- [DEBUG] 总计时开始 ---
+  std::chrono::high_resolution_clock::time_point t_start_total;
+  if (debug_) t_start_total = std::chrono::high_resolution_clock::now();
+
+  // 1. 预处理 (GICP Source)
   source_ = small_gicp::voxelgrid_sampling_omp<
     pcl::PointCloud<pcl::PointXYZ>, pcl::PointCloud<pcl::PointCovariance>>(
     *accumulated_cloud_, registered_leaf_size_);
   
   small_gicp::estimate_covariances_omp(*source_, num_neighbors_, num_threads_);
-  
   source_tree_ = std::make_shared<small_gicp::KdTree<pcl::PointCloud<pcl::PointCovariance>>>(
     source_, small_gicp::KdTreeBuilderOMP(num_threads_));
 
-  if (!source_ || !source_tree_) {
-    return;
-  }
+  if (!source_ || !source_tree_) return;
 
   // ==========================================
-  // 【核心修改】飞虎战队思路：Coarse (NDT) -> Fine (GICP)
+  // 【状态机逻辑】Coarse (NDT) -> Fine (GICP)
   // ==========================================
-  
-  // 定义最终传给 GICP 的初值 (默认为上一帧的结果)
   Eigen::Isometry3d final_guess = previous_result_t_;
+  
+  // 统计变量 (仅用于 Log)
   double ndt_time_ms = 0.0;
   bool ndt_converged = false;
   double ndt_score = -1.0;
-  // --- 阶段一：NDT 粗配准 ---
-  if (use_ndt_ && ndt_omp_) {
-    auto t_ndt_start = std::chrono::high_resolution_clock::now();
-    // 准备 NDT Source (需要 PointXYZ 格式，从 source_ 拷贝坐标)
-    pcl::PointCloud<pcl::PointXYZ>::Ptr ndt_source(new pcl::PointCloud<pcl::PointXYZ>());
-    
-    // 【修改】手动拷贝，避开 PCL 模板检查
-    // ndt_source->resize(source_->size());
-    // ndt_source->header = source_->header;
-    // ndt_source->width = source_->width;
-    // ndt_source->height = source_->height;
-    // ndt_source->is_dense = source_->is_dense;
 
-    // #pragma omp parallel for num_threads(num_threads_)
-    // for (size_t i = 0; i < source_->size(); i++) {
-    //   ndt_source->points[i].x = source_->points[i].x;
-    //   ndt_source->points[i].y = source_->points[i].y;
-    //   ndt_source->points[i].z = source_->points[i].z;
-    // }
-    // 【更高效的写法】手动“跳着”拷贝点，代替 VoxelGrid (省去计算量)
-    // 每 2 个点取 1 个，或者每 3 个点取 1 个
-    int skip_step = 2; // 降采样倍率
-    ndt_source->reserve(source_->size() / skip_step);
-    
-    for (size_t i = 0; i < source_->size(); i += skip_step) {
+  // 【核心判断】只有在“真正迷失”时，才跑 NDT
+  bool should_run_ndt = use_ndt_ && is_lost_ && ndt_omp_;
+
+  // --- 阶段一：NDT 粗配准 (按需运行) ---
+  if (should_run_ndt) {
+    // --- [DEBUG] NDT 计时开始 ---
+    std::chrono::high_resolution_clock::time_point t_ndt_start;
+    if (debug_) t_ndt_start = std::chrono::high_resolution_clock::now();
+
+    // 准备 NDT Source (跳步降采样，极速)
+    pcl::PointCloud<pcl::PointXYZ>::Ptr ndt_source(new pcl::PointCloud<pcl::PointXYZ>());
+    // int skip_step = 4; // 4倍加速
+    ndt_source->reserve(source_->size() / skip_step_);
+    for (size_t i = 0; i < source_->size(); i += skip_step_) {
       pcl::PointXYZ p;
       p.x = source_->points[i].x;
       p.y = source_->points[i].y;
@@ -265,64 +258,90 @@ void SmallGicpRelocalizationNode::performRegistration()
     }
 
     ndt_omp_->setInputSource(ndt_source);
-
-    // NDT 需要 float 类型的 Matrix4f
     Eigen::Matrix4f ndt_guess_mat = previous_result_t_.matrix().cast<float>();
-    
     pcl::PointCloud<pcl::PointXYZ> unused_result;
-    // 执行 NDT 对齐
-    ndt_omp_->align(unused_result, ndt_guess_mat);
-    auto t_ndt_end = std::chrono::high_resolution_clock::now();
-    ndt_time_ms = std::chrono::duration<double, std::milli>(t_ndt_end - t_ndt_start).count();
     
-    // 【新增】记录状态
+    // 执行 NDT
+    ndt_omp_->align(unused_result, ndt_guess_mat);
+
     ndt_converged = ndt_omp_->hasConverged();
-    ndt_score = ndt_omp_->getFitnessScore();
-    if (ndt_omp_->hasConverged()) {
-      // 如果 NDT 收敛，更新 final_guess，这比单纯用上一帧更准
+    if (ndt_converged) {
       final_guess.matrix() = ndt_omp_->getFinalTransformation().cast<double>();
-      // 可选：RCLCPP_INFO(this->get_logger(), "NDT score: %f", ndt_omp_->getFitnessScore());
-    } else {
-      RCLCPP_WARN(this->get_logger(), "NDT did not converge. Using previous guess.");
+    }
+
+    // --- [DEBUG] NDT 计时结束 ---
+    if (debug_) {
+      auto t_ndt_end = std::chrono::high_resolution_clock::now();
+      ndt_time_ms = std::chrono::duration<double, std::milli>(t_ndt_end - t_ndt_start).count();
+      ndt_score = ndt_omp_->getFitnessScore();
+      if (!ndt_converged) RCLCPP_WARN(this->get_logger(), "NDT did not converge.");
     }
   }
-  auto t_gicp_start = std::chrono::high_resolution_clock::now();
-  // --- 阶段二：Small GICP 精配准 ---
+
+  // --- 阶段二：Small GICP 精配准 (始终运行) ---
+  // --- [DEBUG] GICP 计时开始 ---
+  std::chrono::high_resolution_clock::time_point t_gicp_start;
+  if (debug_) t_gicp_start = std::chrono::high_resolution_clock::now();
+
   register_->reduction.num_threads = num_threads_;
   register_->rejector.max_dist_sq = max_dist_sq_;
-  register_->optimizer.max_iterations = 15; // 稍微增加迭代次数以获得更好精度
+  register_->optimizer.max_iterations = 15;
 
-  // 【关键】使用 final_guess (可能来自 NDT) 作为 GICP 的初值
   auto result = register_->align(*target_, *source_, *target_tree_, final_guess);
-  auto t_gicp_end = std::chrono::high_resolution_clock::now();
-  double gicp_time_ms = std::chrono::duration<double, std::milli>(t_gicp_end - t_gicp_start).count();
-  // 更新最终结果
+
+  // --- [DEBUG] GICP 计时结束 ---
+  double gicp_time_ms = 0.0;
+  if (debug_) {
+    auto t_gicp_end = std::chrono::high_resolution_clock::now();
+    gicp_time_ms = std::chrono::duration<double, std::milli>(t_gicp_end - t_gicp_start).count();
+  }
+
+  double avg_error = 0.0;
+
+  // --- 结果判定与状态切换 ---
   if (result.converged) {
     result_t_ = previous_result_t_ = result.T_target_source;
+    
+    // 计算平均误差
+    if (source_->size() > 0) {
+      avg_error = result.error / static_cast<double>(source_->size());
+    }
+
+    if (avg_error < error_threshold_) {
+        is_lost_ = false; // 稳定模式
+    } else {
+        is_lost_ = true;  // 丢失模式
+        // 只有非 debug 模式下才打印关键警告
+        if (!debug_) RCLCPP_WARN(this->get_logger(), "Tracking unstable (Err: %.2f). Enabling NDT.", avg_error);
+    }
+
   } else {
-    RCLCPP_WARN(this->get_logger(), "Small GICP did not converge.");
+    is_lost_ = true;
+    RCLCPP_WARN(this->get_logger(), "GICP Failed. Resetting to LOST mode.");
   }
 
   accumulated_cloud_->clear();
 
-  auto t_end_total = std::chrono::high_resolution_clock::now();
-  double total_time_ms = std::chrono::duration<double, std::milli>(t_end_total - t_start_total).count();
-
+  // --- [DEBUG] 打印报告 ---
   if (debug_) {
+    auto t_end_total = std::chrono::high_resolution_clock::now();
+    double total_time_ms = std::chrono::duration<double, std::milli>(t_end_total - t_start_total).count();
+
     RCLCPP_INFO(this->get_logger(), 
-      "\n[DEBUG] Reloc Report:\n"
-      "  - Total Time: %.2f ms (NDT: %.2f ms | GICP: %.2f ms)\n"
-      "  - NDT Status: %s (Score: %.4f)\n"
-      "  - GICP Status: %s (Error: %.4f | Iter: %zu)\n"
+      "\n[DEBUG] Status Report:\n"
+      "  - Mode: %s\n" 
+      "  - Total Time: %.2f ms (NDT: %.2f | GICP: %.2f)\n"
+      "  - NDT: %s (Score: %.4f)\n"
+      "  - GICP: %s (AvgErr: %.4f | Iter: %zu)\n"
       "  - Pose: x=%.2f, y=%.2f",
+      should_run_ndt ? "RECOVERY (NDT + GICP)" : "TRACKING (GICP Only)",
       total_time_ms, ndt_time_ms, gicp_time_ms,
-      ndt_converged ? "OK" : "FAIL", ndt_score,
-      result.converged ? "OK" : "FAIL", result.error, result.iterations,
+      should_run_ndt ? (ndt_converged ? "OK" : "FAIL") : "SKIP", ndt_score,
+      result.converged ? "OK" : "FAIL", avg_error, result.iterations,
       result_t_.translation().x(), result_t_.translation().y()
     );
   }
 }
-
 
 void SmallGicpRelocalizationNode::publishTransform()
 {
@@ -372,6 +391,8 @@ void SmallGicpRelocalizationNode::initialPoseCallback(
     Eigen::Isometry3d map_to_odom = map_to_robot_base * robot_base_to_odom;
 
     previous_result_t_ = result_t_ = map_to_odom;
+    is_lost_ = true; 
+    RCLCPP_INFO(this->get_logger(), "Initial pose received. Resetting state to LOST to trigger NDT alignment.");
   } catch (tf2::TransformException & ex) {
     RCLCPP_WARN(
       this->get_logger(), "Could not transform initial pose from %s to %s: %s",
