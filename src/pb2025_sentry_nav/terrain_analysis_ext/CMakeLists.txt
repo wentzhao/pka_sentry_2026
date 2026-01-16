@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.5)
-project(terrain_analysis)
+project(terrain_analysis_ext)
 
 # Default to C99
 if(NOT CMAKE_C_STANDARD)
@@ -31,9 +31,9 @@ find_package(message_filters REQUIRED)
 find_package(pcl_conversions REQUIRED)
 find_package(pcl_ros REQUIRED)
 
-add_executable(terrainAnalysis src/terrainAnalysis.cpp)
+add_executable(terrainAnalysisExt src/terrainAnalysisExt.cpp)
 ament_target_dependencies(
-  terrainAnalysis
+  terrainAnalysisExt
   rclcpp
   std_msgs
   sensor_msgs
@@ -46,7 +46,7 @@ ament_target_dependencies(
   pcl_ros
   pcl_conversions)
 
-install(TARGETS terrainAnalysis DESTINATION lib/${PROJECT_NAME})
+install(TARGETS terrainAnalysisExt DESTINATION lib/${PROJECT_NAME})
 
 install(DIRECTORY launch DESTINATION share/${PROJECT_NAME})
 

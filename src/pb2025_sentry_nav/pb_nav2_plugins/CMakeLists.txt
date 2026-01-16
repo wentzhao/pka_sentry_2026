@@ -19,21 +19,19 @@ ament_auto_add_library(pb_back_up_frees_space_behavior SHARED
 )
 
 ament_auto_add_library(layers SHARED
-  src/layers/intensity_obstacle_layer.cpp
   src/layers/intensity_voxel_layer.cpp
 )
 
 if(BUILD_TESTING)
-set(ament_cmake_clang_format_CONFIG_FILE "${CMAKE_SOURCE_DIR}/.clang-format")
-find_package(ament_lint_auto REQUIRED)
-  list(APPEND AMENT_LINT_AUTO_EXCLUDE
-    ament_cmake_uncrustify
-    ament_cmake_flake8
-  )
+  set(ament_cmake_clang_format_CONFIG_FILE "${CMAKE_SOURCE_DIR}/.clang-format")
+  set(ament_cmake_clang_tidy_CONFIG_FILE "${CMAKE_SOURCE_DIR}/.clang-tidy")
+  find_package(ament_lint_auto REQUIRED)
   ament_lint_auto_find_test_dependencies()
 endif()
 
 pluginlib_export_plugin_description_file(nav2_core behavior_plugin.xml)
 pluginlib_export_plugin_description_file(nav2_costmap_2d costmap_plugins.xml)
 
-ament_auto_package(USE_SCOPED_HEADER_INSTALL_DIR)
+ament_auto_package(
+  USE_SCOPED_HEADER_INSTALL_DIR
+)
