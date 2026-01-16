@@ -46,6 +46,7 @@ public:
   V3D gravity_;
   bool imu_en;
   V3D mean_acc;
+  V3D mean_gyr;
   bool imu_need_init_ = true;
   bool after_imu_init_ = false;
   bool b_first_frame_ = true;
@@ -56,7 +57,7 @@ public:
 
 private:
   void IMU_init(const MeasureGroup & meas, int & N);
-  V3D mean_gyr;
+  // V3D mean_gyr;
   int init_iter_num = 1;
   rclcpp::Logger logger;
 };

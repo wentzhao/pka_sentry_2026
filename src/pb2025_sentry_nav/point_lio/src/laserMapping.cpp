@@ -484,39 +484,19 @@ int main(int argc, char ** argv)
         feats_down_size = feats_down_body->points.size();
       }
 
-      // if (!p_imu->after_imu_init_)  // !p_imu->UseLIInit &&
-      // {
-      //   if (!p_imu->imu_need_init_) {
-      //     V3D tmp_gravity;
-      //     if (imu_en) {
-      //       tmp_gravity = -p_imu->mean_acc / p_imu->mean_acc.norm() * G_m_s2;
-      //     } else {
-      //       tmp_gravity << VEC_FROM_ARRAY(gravity_init);
-      //       p_imu->after_imu_init_ = true;
-      //     }
-      //     // V3D tmp_gravity << VEC_FROM_ARRAY(gravity_init);
-      //     M3D rot_init;
-      //     p_imu->Set_init(tmp_gravity, rot_init);
-      //     kf_input.x_.rot = rot_init;
-      //     kf_output.x_.rot = rot_init;
-      //     // kf_input.x_.rot; //.normalize();
-      //     // kf_output.x_.rot; //.normalize();
-      //     kf_output.x_.acc = -rot_init.transpose() * kf_output.x_.gravity;
-      //   } else {
-      //     continue;
-      //   }
-      // }
       if (!p_imu->after_imu_init_)  // !p_imu->UseLIInit &&
       {
         if (!p_imu->imu_need_init_) {
           
-          // ================= [开始修改] 重力对齐核心逻辑 =================
+          // ================= [开始修改] 初始化核心逻辑 (重力对齐 + 零漂修正) =================
           M3D rot_init = M3D::Identity();
           V3D target_gravity;
+          V3D target_bg = V3D::Zero(); // 目标陀螺仪零偏
 
           // 1. 计算对齐参数
           if (imu_en) {
-            // A. 计算旋转：将 Body系下的平均加速度(指向上) 对齐到 世界系Z轴
+            // --- A. 重力对齐 (防止地图倾斜) ---
+            // 将 Body 系下的平均加速度(静止时指向上) 对齐到 世界系 Z 轴 (0,0,1)
             V3D mean_acc_unit = p_imu->mean_acc.normalized();
             V3D world_z_axis(0.0, 0.0, 1.0);
             
@@ -524,27 +504,39 @@ int main(int argc, char ** argv)
             q_init.setFromTwoVectors(mean_acc_unit, world_z_axis);
             rot_init = q_init.toRotationMatrix();
             
-            // B. 在对齐后的世界系中，重力应该是标准的垂直向下
+            // 在对齐后的世界系中，重力应该是标准的垂直向下
             target_gravity << 0.0, 0.0, -G_m_s2; 
             
-            RCLCPP_INFO(LOGGER, "Auto Align: Calculated R from IMU. Set Gravity to vertical.");
+            // --- B. 修正 IMU 零漂 (防止地图旋转漂移) ---
+            // 使用静止时的平均角速度作为初始零偏
+            // 前提：请确保你的 ImuProcess::Process 中计算了 mean_gyr
+            target_bg = p_imu->mean_gyr; 
+
+            RCLCPP_INFO(LOGGER, "Auto Init: Gravity Aligned. Gyro Bias set to: %.4f %.4f %.4f", 
+                        target_bg(0), target_bg(1), target_bg(2));
           } else {
             // 无 IMU 时回退到手动 YAML 参数
             target_gravity << VEC_FROM_ARRAY(gravity_init);
             rot_init = M3D::Identity();
+            target_bg = V3D::Zero();
           }
 
-          // 2. 调用原始接口进行初始化
+          // 2. 调用原始接口进行通用初始化 (保留原有的协方差初始化等逻辑)
           p_imu->Set_init(target_gravity, rot_init);
 
-          // 3. 【关键】强制同步滤波器状态，确保后续逻辑读到的是最新值
+          // 3. 【关键】强制同步滤波器状态
+          // 必须显式赋值，确保滤波器从第一帧开始就使用正确的姿态和零偏
           kf_input.x_.rot = rot_init;
           kf_output.x_.rot = rot_init;
           
           kf_input.x_.gravity = target_gravity;
           kf_output.x_.gravity = target_gravity;
+
+          // 应用陀螺仪零偏修正
+          kf_input.x_.bg = target_bg;
+          kf_output.x_.bg = target_bg;
           
-          // 更新 Bias 加速度
+          // 更新初始加速度 (acc = -R^T * g) 以平衡重力
           kf_output.x_.acc = -rot_init.transpose() * kf_output.x_.gravity;
 
           p_imu->after_imu_init_ = true;
@@ -559,55 +551,42 @@ int main(int argc, char ** argv)
       if (!init_map) {
         feats_down_world->resize(feats_undistort->size());
         
-        // 【关键修复】提前获取一下当前的旋转和平移，确保循环里用的是最新的
-        // 你的问题就在于 pointBodyToWorld 可能用了旧的 rotation
+        // ================= [开始修改] 首帧地图构建逻辑 =================
+        // 关键修复：必须获取当前滤波器中最新的旋转 (rot) 和平移 (pos)
+        // 否则 pointBodyToWorld 可能使用未更新的旧状态，导致地图依然倾斜
         M3D R_curr = kf_output.x_.rot;
         V3D T_curr = kf_output.x_.pos;
         
-        // 打印一下确认这里拿到的 R_curr 是不是 30度 (举例)
-        // 如果这里打印出来是 0 度，说明状态被重置了，那是另一个问题
+        // 调试打印：确认 R_curr 是否已更新（非 0 度）
         static bool debug_printed = false;
         if(!debug_printed) {
             V3D euler = R_curr.eulerAngles(0, 1, 2) * 180 / M_PI;
-            std::cout << "[DEBUG] R_curr in init_map: " << euler.transpose() << std::endl;
+            std::cout << "[DEBUG] Initial R (Euler): " << euler.transpose() << std::endl;
             debug_printed = true;
         }
 
         for (int i = 0; i < feats_undistort->size(); i++) {
-          {
-            // ================== 修改开始 ==================
-            // 原代码：
-            // pointBodyToWorld(&(feats_undistort->points[i]), &(feats_down_world->points[i]));
-            
-            // 新代码：直接手动转换，确保使用最新的 R_curr
+            // 手动执行 pointBodyToWorld 的逻辑，确保使用 R_curr
             PointType &p_body = feats_undistort->points[i];
             PointType &p_world = feats_down_world->points[i];
 
             V3D p_curr(p_body.x, p_body.y, p_body.z);
             V3D p_w;
             
-            // 手动执行 pointBodyToWorld 的逻辑
-            if (!use_imu_as_input) {
-                 // 公式: R_wb * (R_li * p_b + T_li) + T_wb
-                 p_w = R_curr * (Lidar_R_wrt_IMU * p_curr + Lidar_T_wrt_IMU) + T_curr;
-            } else {
-                 // 注意：pointBodyToWorld 内部通常用的是 kf_output 或者 kf_input
-                 // 这里我们要保证和上面赋值的一致
-                 p_w = R_curr * (Lidar_R_wrt_IMU * p_curr + Lidar_T_wrt_IMU) + T_curr;
-            }
+            // 公式: P_world = R_wb * (R_li * P_body + T_li) + T_wb
+            // 注意：这里统一使用 kf_output 的状态，因为它刚才被强制同步过
+            p_w = R_curr * (Lidar_R_wrt_IMU * p_curr + Lidar_T_wrt_IMU) + T_curr;
 
             p_world.x = p_w(0);
             p_world.y = p_w(1);
             p_world.z = p_w(2);
             p_world.intensity = p_body.intensity;
-            // ================== 修改结束 ==================
-          }
         }
-        
+        // ================= [结束修改] =================
+
         for (const auto & point : *feats_down_world) {
           init_feats_world->points.emplace_back(point);
         }
-
         if (init_feats_world->size() >= init_map_size) {
           if (enable_prior_pcd) {
             auto map_cloud = loadPointcloudFromPcd(prior_pcd_map_path);
@@ -618,12 +597,131 @@ int main(int argc, char ** argv)
           publish_init_map(pub_laser_cloud_map);
           init_feats_world.reset(new PointCloudXYZI());
           init_map = true;
-          
         } else {
           init_map = false;
         }
         continue;
       }
+
+
+      // if (!p_imu->after_imu_init_)  // !p_imu->UseLIInit &&
+      // {
+      //   if (!p_imu->imu_need_init_) {
+          
+      //     // ================= [开始修改] 重力对齐核心逻辑 =================
+      //     M3D rot_init = M3D::Identity();
+      //     V3D target_gravity;
+
+      //     // 1. 计算对齐参数
+      //     if (imu_en) {
+      //       // A. 计算旋转：将 Body系下的平均加速度(指向上) 对齐到 世界系Z轴
+      //       V3D mean_acc_unit = p_imu->mean_acc.normalized();
+      //       V3D world_z_axis(0.0, 0.0, 1.0);
+            
+      //       Eigen::Quaterniond q_init;
+      //       q_init.setFromTwoVectors(mean_acc_unit, world_z_axis);
+      //       rot_init = q_init.toRotationMatrix();
+            
+      //       // B. 在对齐后的世界系中，重力应该是标准的垂直向下
+      //       target_gravity << 0.0, 0.0, -G_m_s2; 
+            
+      //       RCLCPP_INFO(LOGGER, "Auto Align: Calculated R from IMU. Set Gravity to vertical.");
+      //     } else {
+      //       // 无 IMU 时回退到手动 YAML 参数
+      //       target_gravity << VEC_FROM_ARRAY(gravity_init);
+      //       rot_init = M3D::Identity();
+      //     }
+
+      //     // 2. 调用原始接口进行初始化
+      //     p_imu->Set_init(target_gravity, rot_init);
+
+      //     // 3. 【关键】强制同步滤波器状态，确保后续逻辑读到的是最新值
+      //     kf_input.x_.rot = rot_init;
+      //     kf_output.x_.rot = rot_init;
+          
+      //     kf_input.x_.gravity = target_gravity;
+      //     kf_output.x_.gravity = target_gravity;
+          
+      //     // 更新 Bias 加速度
+      //     kf_output.x_.acc = -rot_init.transpose() * kf_output.x_.gravity;
+
+      //     p_imu->after_imu_init_ = true;
+      //     // ================= [结束修改] =================
+
+      //   } else {
+      //     continue;
+      //   }
+      // }
+
+      // /*** initialize the map ***/
+      // if (!init_map) {
+      //   feats_down_world->resize(feats_undistort->size());
+        
+      //   // 【关键修复】提前获取一下当前的旋转和平移，确保循环里用的是最新的
+      //   // 你的问题就在于 pointBodyToWorld 可能用了旧的 rotation
+      //   M3D R_curr = kf_output.x_.rot;
+      //   V3D T_curr = kf_output.x_.pos;
+        
+      //   // 打印一下确认这里拿到的 R_curr 是不是 30度 (举例)
+      //   // 如果这里打印出来是 0 度，说明状态被重置了，那是另一个问题
+      //   static bool debug_printed = false;
+      //   if(!debug_printed) {
+      //       V3D euler = R_curr.eulerAngles(0, 1, 2) * 180 / M_PI;
+      //       std::cout << "[DEBUG] R_curr in init_map: " << euler.transpose() << std::endl;
+      //       debug_printed = true;
+      //   }
+
+      //   for (int i = 0; i < feats_undistort->size(); i++) {
+      //     {
+      //       // ================== 修改开始 ==================
+      //       // 原代码：
+      //       // pointBodyToWorld(&(feats_undistort->points[i]), &(feats_down_world->points[i]));
+            
+      //       // 新代码：直接手动转换，确保使用最新的 R_curr
+      //       PointType &p_body = feats_undistort->points[i];
+      //       PointType &p_world = feats_down_world->points[i];
+
+      //       V3D p_curr(p_body.x, p_body.y, p_body.z);
+      //       V3D p_w;
+            
+      //       // 手动执行 pointBodyToWorld 的逻辑
+      //       if (!use_imu_as_input) {
+      //            // 公式: R_wb * (R_li * p_b + T_li) + T_wb
+      //            p_w = R_curr * (Lidar_R_wrt_IMU * p_curr + Lidar_T_wrt_IMU) + T_curr;
+      //       } else {
+      //            // 注意：pointBodyToWorld 内部通常用的是 kf_output 或者 kf_input
+      //            // 这里我们要保证和上面赋值的一致
+      //            p_w = R_curr * (Lidar_R_wrt_IMU * p_curr + Lidar_T_wrt_IMU) + T_curr;
+      //       }
+
+      //       p_world.x = p_w(0);
+      //       p_world.y = p_w(1);
+      //       p_world.z = p_w(2);
+      //       p_world.intensity = p_body.intensity;
+      //       // ================== 修改结束 ==================
+      //     }
+      //   }
+        
+      //   for (const auto & point : *feats_down_world) {
+      //     init_feats_world->points.emplace_back(point);
+      //   }
+
+      //   if (init_feats_world->size() >= init_map_size) {
+      //     if (enable_prior_pcd) {
+      //       auto map_cloud = loadPointcloudFromPcd(prior_pcd_map_path);
+      //       ivox_->AddPoints(map_cloud->points);
+      //     } else {
+      //       ivox_->AddPoints(init_feats_world->points);
+      //     }
+      //     publish_init_map(pub_laser_cloud_map);
+      //     init_feats_world.reset(new PointCloudXYZI());
+      //     init_map = true;
+          
+      //   } else {
+      //     init_map = false;
+      //   }
+      //   continue;
+      // }
 
       /*** ICP and Kalman filter update ***/
       normvec->resize(feats_down_size);
