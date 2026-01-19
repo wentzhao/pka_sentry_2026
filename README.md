@@ -175,5 +175,7 @@ use_robot_state_pub:=True
 
 20260113: 重定位算法大概完成，使用ndt+gicp，实测在rmul25仿真环境下，xy3m，yaw30度能稳定定位
 
+20260117:添加pointlio首帧重力校准
+
 
 
