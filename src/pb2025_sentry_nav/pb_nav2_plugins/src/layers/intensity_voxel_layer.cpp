@@ -1,5 +1,5 @@
 // Copyright 2025 Lihan Chen
-// ... (License Header 省略) ...
+// ... (License Header) ...
 
 #include "pb_nav2_plugins/layers/intensity_voxel_layer.hpp"
 #include <vector>
@@ -73,6 +73,7 @@ void IntensityVoxelLayer::matchSize()
 void IntensityVoxelLayer::reset()
 {
   ObstacleLayer::reset();
+  // 仅在完全重置时调用，这里保持原样即可
   resetMaps();
 }
 
@@ -91,9 +92,13 @@ void IntensityVoxelLayer::updateBounds(
     updateOrigin(robot_x - getSizeInMetersX() / 2, robot_y - getSizeInMetersY() / 2);
   }
 
-  // !!! CRITICAL CHANGE !!!
-  // 不要在这里调用 resetMaps()，这会导致动态障碍物消失。
+  // !!! CRITICAL OPTIMIZATION !!!
+  // 1. 禁用全局 Costmap 重置: 防止地图闪烁和动态障碍物立即消失。
   // resetMaps(); 
+
+  // 2. 启用 Voxel Grid 重置: 确保每一帧的体素统计是独立的，
+  //    防止旧的噪声计数累积导致误报。
+  voxel_grid_.reset(); 
 
   // if not enabled, stop here
   if (!enabled_) {
@@ -107,22 +112,16 @@ void IntensityVoxelLayer::updateBounds(
   std::vector<Observation> observations;
   std::vector<Observation> clearing_observations;
 
-  // 1. 获取 Clearing (清除) 观测源
-  // 这会利用 Raytracing 清除传感器与障碍物之间的“自由空间”，从而去除鬼影
+  // 1. Clearing (清除): 优先执行光线追踪清除
   current = getClearingObservations(clearing_observations) && current;
-
-  // 2. 执行清除逻辑
   for (const auto & obs : clearing_observations) {
     raytraceFreespace(obs, min_x, min_y, max_x, max_y);
   }
 
-  // 3. 获取 Marking (标记) 观测源
+  // 2. Marking (标记): 获取需要标记的观测数据
   current = getMarkingObservations(observations) && current;
-
-  // update the global current status
   current_ = current;
 
-  // 4. 执行标记逻辑 (保留你原本的强度过滤逻辑)
   for (const auto & obs : observations) {
     double sq_obstacle_max_range = obs.obstacle_max_range_ * obs.obstacle_max_range_;
     double sq_obstacle_min_range = obs.obstacle_min_range_ * obs.obstacle_min_range_;
@@ -135,27 +134,25 @@ void IntensityVoxelLayer::updateBounds(
     for (; it_x != it_x.end(); ++it_x, ++it_y, ++it_z, ++it_i) {
       double px = *it_x, py = *it_y, pz = *it_z;
 
-      // if the obstacle is too low/high, we won't add it
+      // Height check
       if (pz < min_obstacle_height_ || pz > max_obstacle_height_) {
         continue;
       }
 
-      // if the intensity is not in the range we want, we won't add it
+      // Intensity check
       if (*it_i < min_obstacle_intensity_ || *it_i > max_obstacle_intensity_) {
         continue;
       }
 
-      // compute the squared distance from the hitpoint to the pointcloud's origin
       double sq_dist = (px - obs.origin_.x) * (px - obs.origin_.x) +
                        (py - obs.origin_.y) * (py - obs.origin_.y) +
                        (pz - obs.origin_.z) * (pz - obs.origin_.z);
 
-      // if the point is far/close enough away... we won't consider it
+      // Range check
       if (sq_dist <= sq_obstacle_min_range || sq_dist >= sq_obstacle_max_range) {
         continue;
       }
 
-      // now we need to compute the map coordinates for the observation
       unsigned int mx, my, mz;
       if (pz < origin_z_) {
         if (!worldToMap3D(px, py, origin_z_, mx, my, mz)) {
@@ -165,7 +162,7 @@ void IntensityVoxelLayer::updateBounds(
         continue;
       }
 
-      // mark the cell in the voxel grid and check if we should also mark it in the costmap
+      // Mark voxel and potentially update costmap
       if (voxel_grid_.markVoxelInMap(mx, my, mz, mark_threshold_)) {
         unsigned int index = getIndex(mx, my);
         costmap_[index] = LETHAL_OBSTACLE;
@@ -200,12 +197,10 @@ void IntensityVoxelLayer::updateBounds(
 
 void IntensityVoxelLayer::updateOrigin(double new_origin_x, double new_origin_y)
 {
-  // project the new origin into the grid
   int cell_ox, cell_oy;
   cell_ox = static_cast<int>((new_origin_x - origin_x_) / resolution_);
   cell_oy = static_cast<int>((new_origin_y - origin_y_) / resolution_);
 
-  // update the origin with the appropriate world coordinates
   origin_x_ = origin_x_ + cell_ox * resolution_;
   origin_y_ = origin_y_ + cell_oy * resolution_;
 }
