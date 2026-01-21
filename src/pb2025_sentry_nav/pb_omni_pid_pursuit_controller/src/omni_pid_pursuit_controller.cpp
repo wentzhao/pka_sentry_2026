@@ -17,6 +17,7 @@
 #include "nav2_core/exceptions.hpp"
 #include "nav2_util/geometry_utils.hpp"
 #include "nav2_util/node_utils.hpp"
+#include "angles/angles.h"
 
 using nav2_util::declare_parameter_if_not_declared;
 using nav2_util::geometry_utils::euclidean_distance;
@@ -42,6 +43,7 @@ void OmniPidPursuitController::configure(
 
   costmap_ros_ = costmap_ros;
   costmap_ = costmap_ros_->getCostmap();
+
   tf_ = tf;
   plugin_name_ = name;
   logger_ = node->get_logger();
@@ -216,45 +218,125 @@ void OmniPidPursuitController::deactivate()
   dyn_params_handler_.reset();
 }
 
+// geometry_msgs::msg::TwistStamped OmniPidPursuitController::computeVelocityCommands(
+//   const geometry_msgs::msg::PoseStamped & pose, const geometry_msgs::msg::Twist & velocity,
+//   nav2_core::GoalChecker * /*goal_checker*/)
+// {
+//   std::lock_guard<std::mutex> lock_reinit(mutex_);
+
+//   nav2_costmap_2d::Costmap2D * costmap = costmap_ros_->getCostmap();
+//   std::unique_lock<nav2_costmap_2d::Costmap2D::mutex_t> lock(*(costmap->getMutex()));
+
+//   // Transform path to robot base frame
+//   auto transformed_plan = transformGlobalPlan(pose);
+
+//   // Find look ahead distance and point on path and publish
+//   double lookahead_dist = getLookAheadDistance(velocity);
+
+//   auto carrot_pose = getLookAheadPoint(lookahead_dist, transformed_plan);
+//   carrot_pub_->publish(createCarrotMsg(carrot_pose));
+
+//   double lin_dist = hypot(carrot_pose.pose.position.x, carrot_pose.pose.position.y);
+//   double theta_dist = atan2(carrot_pose.pose.position.y, carrot_pose.pose.position.x);
+//   double angle_to_goal = tf2::getYaw(carrot_pose.pose.orientation);
+
+//   if (use_rotate_to_heading_) {
+//     angle_to_goal = tf2::getYaw(transformed_plan.poses.back().pose.orientation);
+//     if (fabs(angle_to_goal) > use_rotate_to_heading_treshold_) {
+//       lin_dist = 0;
+//     }
+//   }
+
+//   auto lin_vel = move_pid_->calculate(lin_dist, 0);
+//   auto angular_vel = enable_rotation_ ? heading_pid_->calculate(angle_to_goal, 0) : 0.0;
+
+//   applyCurvatureLimitation(transformed_plan, carrot_pose, lin_vel);
+
+//   applyApproachVelocityScaling(transformed_plan, lin_vel);
+
+//   // Transform local frame to global frame to use in collision checking
+//   nav_msgs::msg::Path costmap_frame_local_plan;
+
+//   int sample_points = 10;
+//   int plan_size = transformed_plan.poses.size();
+//   for (int i = 0; i < sample_points; ++i) {
+//     int index = std::min((i * plan_size) / sample_points, plan_size - 1);
+//     geometry_msgs::msg::PoseStamped map_pose;
+//     transformPose(costmap_ros_->getGlobalFrameID(), transformed_plan.poses[index], map_pose);
+//     costmap_frame_local_plan.poses.push_back(map_pose);
+//   }
+
+//   geometry_msgs::msg::TwistStamped cmd_vel;
+//   cmd_vel.header = pose.header;
+//   if (!isCollisionDetected(costmap_frame_local_plan)) {
+//     cmd_vel.twist.linear.x = lin_vel * cos(theta_dist);
+//     cmd_vel.twist.linear.y = lin_vel * sin(theta_dist);
+//     cmd_vel.twist.angular.z = angular_vel;
+//   } else {
+//     throw nav2_core::PlannerException("Collision detected in the trajectory. Stopping the robot!");
+//   }
+
+//   return cmd_vel;
+// }
+
 geometry_msgs::msg::TwistStamped OmniPidPursuitController::computeVelocityCommands(
   const geometry_msgs::msg::PoseStamped & pose, const geometry_msgs::msg::Twist & velocity,
   nav2_core::GoalChecker * /*goal_checker*/)
 {
   std::lock_guard<std::mutex> lock_reinit(mutex_);
-
   nav2_costmap_2d::Costmap2D * costmap = costmap_ros_->getCostmap();
   std::unique_lock<nav2_costmap_2d::Costmap2D::mutex_t> lock(*(costmap->getMutex()));
 
-  // Transform path to robot base frame
+  // 1. 转换路径到机器人坐标系 (Robot Base Frame)
   auto transformed_plan = transformGlobalPlan(pose);
 
-  // Find look ahead distance and point on path and publish
+  // 2. 计算前瞻点 (Carrot)
   double lookahead_dist = getLookAheadDistance(velocity);
-
   auto carrot_pose = getLookAheadPoint(lookahead_dist, transformed_plan);
   carrot_pub_->publish(createCarrotMsg(carrot_pose));
 
+  // 3. 计算直线距离 (x, y)
   double lin_dist = hypot(carrot_pose.pose.position.x, carrot_pose.pose.position.y);
   double theta_dist = atan2(carrot_pose.pose.position.y, carrot_pose.pose.position.x);
-  double angle_to_goal = tf2::getYaw(carrot_pose.pose.orientation);
 
+  // =====================【核心修复开始】=====================
+  
+  // 4. 计算角度误差 (Angle Error)
+  // carrot_pose 已经在 base_link 坐标系下，所以机器人的当前角度就是 0.0
+  double raw_yaw = tf2::getYaw(carrot_pose.pose.orientation);
+  
+  // 【关键】使用 shortest_angular_distance 计算从 0 转到 raw_yaw 的最短路径
+  // 这能保证结果永远在 [-PI, PI] 之间，比如目标是 181度，误差会自动变成 -179度
+  double angle_error = angles::shortest_angular_distance(0.0, raw_yaw);
+
+  // 5. 处理原地旋转逻辑 (Rotate to Heading)
   if (use_rotate_to_heading_) {
-    angle_to_goal = tf2::getYaw(transformed_plan.poses.back().pose.orientation);
-    if (fabs(angle_to_goal) > use_rotate_to_heading_treshold_) {
+    // 获取路径最后一个点的朝向（也是在 base_link 下）
+    double final_heading = tf2::getYaw(transformed_plan.poses.back().pose.orientation);
+    
+    // 计算当前朝向与最终朝向的误差
+    double heading_error = angles::shortest_angular_distance(0.0, final_heading);
+
+    // 如果误差太大，强制先原地旋转（将线速度距离设为0）
+    if (fabs(heading_error) > use_rotate_to_heading_treshold_) {
       lin_dist = 0;
+      angle_error = heading_error; // PID 的目标改为对齐终点朝向
     }
   }
 
+  // 6. PID 计算
+  // 注意：因为我们已经算好了 angle_error，所以 set_point 传 error，pv 传 0
+  // 这样 PID 内部: error = set_point - pv = angle_error - 0 = angle_error
   auto lin_vel = move_pid_->calculate(lin_dist, 0);
-  auto angular_vel = enable_rotation_ ? heading_pid_->calculate(angle_to_goal, 0) : 0.0;
+  auto angular_vel = enable_rotation_ ? heading_pid_->calculate(angle_error, 0) : 0.0;
+
+  // =====================【核心修复结束】=====================
 
   applyCurvatureLimitation(transformed_plan, carrot_pose, lin_vel);
-
   applyApproachVelocityScaling(transformed_plan, lin_vel);
 
-  // Transform local frame to global frame to use in collision checking
+  // 碰撞检测
   nav_msgs::msg::Path costmap_frame_local_plan;
-
   int sample_points = 10;
   int plan_size = transformed_plan.poses.size();
   for (int i = 0; i < sample_points; ++i) {
@@ -266,16 +348,22 @@ geometry_msgs::msg::TwistStamped OmniPidPursuitController::computeVelocityComman
 
   geometry_msgs::msg::TwistStamped cmd_vel;
   cmd_vel.header = pose.header;
+
   if (!isCollisionDetected(costmap_frame_local_plan)) {
     cmd_vel.twist.linear.x = lin_vel * cos(theta_dist);
     cmd_vel.twist.linear.y = lin_vel * sin(theta_dist);
     cmd_vel.twist.angular.z = angular_vel;
   } else {
-    throw nav2_core::PlannerException("Collision detected in the trajectory. Stopping the robot!");
+    // 遇到障碍物停车
+    cmd_vel.twist.linear.x = 0.0;
+    cmd_vel.twist.linear.y = 0.0;
+    cmd_vel.twist.angular.z = 0.0;
+    // RCLCPP_WARN(logger_, "Collision detected. Stopping.");
   }
 
   return cmd_vel;
 }
+
 
 void OmniPidPursuitController::setPlan(const nav_msgs::msg::Path & path) { global_plan_ = path; }
 
@@ -500,21 +588,49 @@ double OmniPidPursuitController::approachVelocityScalingFactor(
   }
 }
 
+// void OmniPidPursuitController::applyApproachVelocityScaling(
+//   const nav_msgs::msg::Path & path, double & linear_vel) const
+// {
+//   double approach_vel = linear_vel;
+//   double velocity_scaling = approachVelocityScalingFactor(path);
+//   double unbounded_vel = approach_vel * velocity_scaling;
+//   if (unbounded_vel < min_approach_linear_velocity_) {
+//     approach_vel = min_approach_linear_velocity_;
+//   } else {
+//     approach_vel *= velocity_scaling;
+//   }
+
+//   // Use the lowest velocity between approach and other constraints, if all overlapping
+//   linear_vel = std::min(linear_vel, approach_vel);
+// }
+
 void OmniPidPursuitController::applyApproachVelocityScaling(
   const nav_msgs::msg::Path & path, double & linear_vel) const
 {
   double approach_vel = linear_vel;
   double velocity_scaling = approachVelocityScalingFactor(path);
   double unbounded_vel = approach_vel * velocity_scaling;
-  if (unbounded_vel < min_approach_linear_velocity_) {
-    approach_vel = min_approach_linear_velocity_;
+
+  // 【核心修复】引入死区判断逻辑
+  // 如果 velocity_scaling 已经很小（比如 < 0.1，意味着离终点很近），
+  // 说明我们确实想停车了，这时候就不应该再强加最小速度限制。
+  
+  if (velocity_scaling < 0.1) {
+       // 允许速度平滑归零
+       approach_vel = unbounded_vel;
   } else {
-    approach_vel *= velocity_scaling;
+       // 在正常行驶过程中，保持最小动量，防止摩擦力导致卡顿
+       if (unbounded_vel < min_approach_linear_velocity_) {
+         approach_vel = min_approach_linear_velocity_;
+       } else {
+         approach_vel *= velocity_scaling;
+       }
   }
 
-  // Use the lowest velocity between approach and other constraints, if all overlapping
+  // 取两者最小值，确保安全
   linear_vel = std::min(linear_vel, approach_vel);
 }
+
 
 void OmniPidPursuitController::applyCurvatureLimitation(
   const nav_msgs::msg::Path & path, const geometry_msgs::msg::PoseStamped & lookahead_pose,
