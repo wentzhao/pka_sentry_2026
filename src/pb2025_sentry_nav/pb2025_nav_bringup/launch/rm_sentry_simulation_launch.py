@@ -278,7 +278,7 @@ def generate_launch_description():
     ld.add_action(bringup_cmd)
     ld.add_action(joy_teleop_cmd)
     ld.add_action(rviz_cmd)
-    ld.add_action(behaviortree_cmd)
+    # ld.add_action(behaviortree_cmd)
     # ld.add_action(start_rm_serial_node)
 
     return ld

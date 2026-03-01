@@ -146,19 +146,45 @@ fake_vel_transform:
 
 small_gicp_relocalization:
   ros__parameters:
-    use_sim_time: false
-    num_threads: 8 #4 8
-    num_neighbors: 3 #20 3
-    global_leaf_size: 0.5 #0.15 0.5
-    registered_leaf_size: 0.5 #0.05 0.5
-    max_dist_sq: 1.0 #3.0 1.0
+    use_sim_time: False
+    debug: false
+    use_ndt: true
+    error_threshold: 0.2
+    skip_step: 2
+    num_threads: 4
+    num_neighbors: 20
+    global_leaf_size: 0.1
+    registered_leaf_size: 0.05
+    max_dist_sq: 10.0
+    input_cloud_topic: "registered_scan" #registered_scan terrain_map_ext
     map_frame: "map"
     odom_frame: "odom"
     base_frame: "base_footprint"
-    robot_base_frame: "base_link"
-    lidar_frame: "livox_frame"
+    robot_base_frame: "gimbal_yaw"
+    lidar_frame: "front_mid360"
+    init_pose: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]   # [x, y, z, roll, pitch, yaw]
+
+    ndt_resolution: 1.0
+    ndt_num_threads: 4
+
     # The prior_pcd_file does not need to be specified since it going to be set by defaults in launch.
     # prior_pcd_file: ""
+
+# small_gicp_relocalization:
+#   ros__parameters:
+#     use_sim_time: false
+#     num_threads: 8 #4 8
+#     num_neighbors: 3 #20 3
+#     global_leaf_size: 0.5 #0.15 0.5
+#     registered_leaf_size: 0.5 #0.05 0.5
+#     max_dist_sq: 1.0 #3.0 1.0
+#     map_frame: "map"
+#     odom_frame: "odom"
+#     base_frame: "base_footprint"
+#     robot_base_frame: "base_link"
+#     lidar_frame: "livox_frame"
+#     # The prior_pcd_file does not need to be specified since it going to be set by defaults in launch.
+#     # prior_pcd_file: ""
 
 pointcloud_to_laserscan:
   ros__parameters:
@@ -367,86 +393,123 @@ controller_server:
 local_costmap:
   local_costmap:
     ros__parameters:
-      use_sim_time: true
-      update_frequency: 10.0 #10
-      publish_frequency: 5.0 #5
+      use_sim_time: False
+      update_frequency: 10.0
+      publish_frequency: 5.0
       global_frame: odom
-      robot_base_frame: base_link_fake
+      robot_base_frame: gimbal_yaw_fake
       rolling_window: true
       width: 5
       height: 5
-      resolution: 0.1 #0.05
-      robot_radius: 0.25
-      plugins: ["static_layer", "obstacle_layer", "inflation_layer"]
-      obstacle_layer:
-        plugin: "pb_nav2_costmap_2d::IntensityObstacleLayer"
-        enabled: True
-        footprint_clearing_enabled: True
+      resolution: 0.05
+      robot_radius: 0.3
+      plugins: ["static_layer", "intensity_voxel_layer", "inflation_layer"]
+      
+      intensity_voxel_layer:
+        plugin: pb_nav2_costmap_2d::IntensityVoxelLayer
+        enabled: true
+        track_unknown_space: true
+        footprint_clearing_enabled: true
+        publish_voxel_map: false
+        combination_method: 1
+        mark_threshold: 3 
+        origin_z: 0.0
+        unknown_threshold: 5
+        z_resolution: 0.05
+        z_voxels: 16
+        min_obstacle_height: 0.05 
+        max_obstacle_height: 2.0
         min_obstacle_intensity: 0.1
         max_obstacle_intensity: 2.0
+        
         observation_sources: terrain_map
+        
         terrain_map:
-          # '<robot_namespace>' keyword shall be replaced with 'namespace' where user defined.
-          # It doesn't need to start with '/'
-          topic: /terrain_map
-          clearing: True
-          marking: True
-          data_type: "PointCloud2"
+          data_type: PointCloud2
+          topic: <robot_namespace>/terrain_map
+          sensor_frame: front_mid360
+          
+          # --- 关键配置 ---
+          clearing: true           # 允许清除 (消除鬼影)
+          marking: true            # 允许标记
+          observation_persistence: 1.0  # 关键! 障碍物保留 1.0 秒，防止闪烁导致规划卡死
+          raytrace_max_range: 3.0  # 必须大于 obstacle_max_range 以便清除边界外的障碍
+          raytrace_min_range: 0.0  
+          # ----------------
+          
           min_obstacle_height: 0.0
           max_obstacle_height: 2.0
           obstacle_max_range: 5.0
           obstacle_min_range: 0.2
-          raytrace_max_range: 8.0
-          raytrace_min_range: 0.2
-      static_layer:
-        plugin: "nav2_costmap_2d::StaticLayer"
-        map_subscribe_transient_local: True
-      inflation_layer:
-        plugin: "nav2_costmap_2d::InflationLayer"
-        cost_scaling_factor: 4.5
-        inflation_radius: 0.5
-      always_send_full_costmap: False
 
-global_costmap:
-  global_costmap:
-    ros__parameters:
-      use_sim_time: true
-      update_frequency: 5.0 #5.0
-      publish_frequency: 2.0 #2.0
-      global_frame: map
-      robot_base_frame: base_link_fake
-      robot_radius: 0.25
-      resolution: 0.05
-      track_unknown_space: true
-      plugins: ["static_layer", "obstacle_layer", "inflation_layer"]
-      obstacle_layer:
-        plugin: "pb_nav2_costmap_2d::IntensityObstacleLayer"
-        enabled: True
-        footprint_clearing_enabled: True
-        min_obstacle_intensity: 0.1
-        max_obstacle_intensity: 2.0
-        observation_sources: terrain_map
-        terrain_map:
-          # '<robot_namespace>' keyword shall be replaced with 'namespace' where user defined.
-          # It doesn't need to start with '/'
-          topic: /terrain_map
-          clearing: True
-          marking: True
-          data_type: "PointCloud2"
-          min_obstacle_height: 0.0
-          max_obstacle_height: 2.0
-          obstacle_max_range: 10.0
-          obstacle_min_range: 0.2
-          raytrace_max_range: 8.0
-          raytrace_min_range: 0.2
       static_layer:
         plugin: "nav2_costmap_2d::StaticLayer"
         map_subscribe_transient_local: True
+      
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 4.0
         inflation_radius: 0.7
-      always_send_full_costmap: False
+        always_send_full_costmap: False
+
+global_costmap:
+  global_costmap:
+    ros__parameters:
+      use_sim_time: True
+      update_frequency: 5.0
+      publish_frequency: 2.0
+      global_frame: map
+      robot_base_frame: gimbal_yaw_fake
+      robot_radius: 0.3
+      resolution: 0.05
+      plugins: ["static_layer", "intensity_voxel_layer", "inflation_layer"]
+      
+      intensity_voxel_layer:
+        plugin: pb_nav2_costmap_2d::IntensityVoxelLayer
+        enabled: true
+        track_unknown_space: true
+        footprint_clearing_enabled: true
+        publish_voxel_map: false
+        combination_method: 1
+        mark_threshold: 3 
+        origin_z: 0.0
+        unknown_threshold: 5
+        z_resolution: 0.05
+        z_voxels: 16
+        min_obstacle_height: 0.05 
+        max_obstacle_height: 2.0
+        min_obstacle_intensity: 0.1
+        max_obstacle_intensity: 2.0
+        
+        observation_sources: terrain_map_ext
+        
+        terrain_map_ext:
+          data_type: PointCloud2
+          topic: <robot_namespace>/terrain_map_ext
+          sensor_frame: front_mid360
+          
+          # --- 关键配置 ---
+          clearing: true           
+          marking: true
+          observation_persistence: 1.0  # 全局地图也建议加上，保证规划稳定性
+          raytrace_max_range: 11.0 
+          raytrace_min_range: 0.0
+          # ----------------
+          
+          min_obstacle_height: 0.0
+          max_obstacle_height: 2.0
+          obstacle_max_range: 10.0
+          obstacle_min_range: 0.2
+
+      static_layer:
+        plugin: "nav2_costmap_2d::StaticLayer"
+        map_subscribe_transient_local: True
+      
+      inflation_layer:
+        plugin: "nav2_costmap_2d::InflationLayer"
+        cost_scaling_factor: 4.0
+        inflation_radius: 0.7
+        always_send_full_costmap: False
 
 # The yaml_filename does not need to be specified since it going to be set by defaults in launch.
 # If you'd rather set it in the yaml, remove the default "map" value in the tb3_simulation_launch.py
@@ -501,14 +564,15 @@ map_saver:
 #         do_refinement: true
 planner_server:
   ros__parameters:
-    use_sim_time: false
-    expected_planner_frequency: 20.0
+    use_sim_time: False
+    expected_planner_frequency: 10.0
     planner_plugins: ["GridBased"]
     GridBased:
-      plugin: "nav2_navfn_planner/NavfnPlanner"
-      tolerance: 0.5
-      use_astar: false
-      allow_unknown: true
+      plugin: "nav2_theta_star_planner/ThetaStarPlanner" # In Iron and older versions, "/" was used instead of "::"
+      how_many_corners: 8
+      w_euc_cost: 1.0
+      w_traversal_cost: 10.0
+      w_heuristic_cost: 1.0
 
 smoother_server:
   ros__parameters:
